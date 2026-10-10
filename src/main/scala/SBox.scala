@@ -28,6 +28,11 @@ object SBox {
   
   val table: Seq[Int] = (0 until 256).map(b => affine(inverse(b)))
   
+  //All 256 entries packed into one 2048-bit constant, entry k is bits 8k+7..8k
+  private val packed: BigInt = table.zipWithIndex.map { case (v, k) => BigInt(v) << (8 * k) }.sum
+
   //Look up one byte (can also be used for SubWord in KeyExpansion)
-  def apply(in: UInt): UInt = VecInit(table.map(_.U(8.W)))(in)
+  //Shifting the constant gives the same hardware as indexing a Vec of the 256 values,
+  //but simulates ~400x faster in chiseltest (the Vec version made the AES tests take hours)
+  def apply(in: UInt): UInt = (packed.U(2048.W) >> (in(7, 0) ## 0.U(3.W)))(7, 0)
 }
