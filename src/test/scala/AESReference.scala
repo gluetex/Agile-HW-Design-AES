@@ -43,22 +43,28 @@ object AESReference {
     cipher.init(Cipher.ENCRYPT_MODE, new SecretKeySpec(key.map(_.toByte).toArray, "AES"))
     cipher.doFinal(block.map(_.toByte).toArray).map(_ & 0xff).toSeq
   }
+
+  def decryptJdk(key: Seq[Int], block: Seq[Int]): Seq[Int] = {
+    val cipher = Cipher.getInstance("AES/ECB/NoPadding")
+    cipher.init(Cipher.DECRYPT_MODE, new SecretKeySpec(key.map(_.toByte).toArray, "AES"))
+    cipher.doFinal(block.map(_.toByte).toArray).map(_ & 0xff).toSeq
+  }
 }
 
 //Parser for the NIST AESAVS response files (.rsp) in src/test/resources/nist.
-//Only the [ENCRYPT] part is read. PLAINTEXT and CIPHERTEXT can hold several
+//Only one part is read, [ENCRYPT] or [DECRYPT]. PLAINTEXT and CIPHERTEXT can hold several
 //blocks (the MMT files), they are split into 16 byte blocks.
 object NistVectors {
   case class Vector(count: Int, key: Seq[Int], plaintext: Seq[BigInt], ciphertext: Seq[BigInt])
 
   private def blocks(hex: String): Seq[BigInt] = hex.grouped(32).map(BigInt(_, 16)).toSeq
 
-  def load(file: String): Seq[Vector] = {
+  def load(file: String, section: String = "ENCRYPT"): Seq[Vector] = {
     val source = Source.fromResource(s"nist/$file")
     val lines = try source.getLines().map(_.trim).toList finally source.close()
-    val encrypt = lines.dropWhile(_ != "[ENCRYPT]").drop(1).takeWhile(_ != "[DECRYPT]")
+    val part = lines.dropWhile(_ != s"[$section]").drop(1).takeWhile(!_.startsWith("["))
 
-    val records = encrypt.foldLeft(List(Map.empty[String, String])) { (acc, line) =>
+    val records = part.foldLeft(List(Map.empty[String, String])) { (acc, line) =>
       if (line.isEmpty || line.startsWith("#")) {
         if (acc.head.isEmpty) acc else Map.empty[String, String] :: acc
       } else {
@@ -70,7 +76,7 @@ object NistVectors {
     val vectors = records.map { r =>
       Vector(r("COUNT").toInt, AESReference.hexToBytes(r("KEY")), blocks(r("PLAINTEXT")), blocks(r("CIPHERTEXT")))
     }
-    require(vectors.nonEmpty, s"no test vectors found in $file")
+    require(vectors.nonEmpty, s"no [$section] test vectors found in $file")
     vectors
   }
 }
