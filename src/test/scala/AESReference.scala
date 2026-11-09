@@ -53,13 +53,17 @@ object AESReference {
 
 //Parser for the NIST AESAVS response files (.rsp) in src/test/resources/nist.
 //Only one part is read, [ENCRYPT] or [DECRYPT]. PLAINTEXT and CIPHERTEXT can hold several
-//blocks (the MMT files), they are split into 16 byte blocks.
+//blocks (the MMT files), they are split into pieces of segmentSize bits:
+//128 (16 bytes) for ECB, CBC, OFB and CFB128, 8 (1 byte) for CFB8.
+//iv is only there for the modes that have one, so it is None for ECB.
 object NistVectors {
-  case class Vector(count: Int, key: Seq[Int], plaintext: Seq[BigInt], ciphertext: Seq[BigInt])
+  case class Vector(count: Int, key: Seq[Int], plaintext: Seq[BigInt], ciphertext: Seq[BigInt],
+                    iv: Option[BigInt] = None)
 
-  private def blocks(hex: String): Seq[BigInt] = hex.grouped(32).map(BigInt(_, 16)).toSeq
+  private def split(hex: String, segmentSize: Int): Seq[BigInt] =
+    hex.grouped(segmentSize / 4).map(BigInt(_, 16)).toSeq
 
-  def load(file: String, section: String = "ENCRYPT"): Seq[Vector] = {
+  def load(file: String, section: String = "ENCRYPT", segmentSize: Int = 128): Seq[Vector] = {
     val source = Source.fromResource(s"nist/$file")
     val lines = try source.getLines().map(_.trim).toList finally source.close()
     val part = lines.dropWhile(_ != s"[$section]").drop(1).takeWhile(!_.startsWith("["))
@@ -74,7 +78,8 @@ object NistVectors {
     }.filter(_.nonEmpty).reverse
 
     val vectors = records.map { r =>
-      Vector(r("COUNT").toInt, AESReference.hexToBytes(r("KEY")), blocks(r("PLAINTEXT")), blocks(r("CIPHERTEXT")))
+      Vector(r("COUNT").toInt, AESReference.hexToBytes(r("KEY")),
+        split(r("PLAINTEXT"), segmentSize), split(r("CIPHERTEXT"), segmentSize), r.get("IV").map(BigInt(_, 16)))
     }
     require(vectors.nonEmpty, s"no [$section] test vectors found in $file")
     vectors
