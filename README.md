@@ -3,7 +3,7 @@
 This repository is for the group project in the course [02201 Agile Hardware Design](https://kurser.dtu.dk/course/02201) at the Technical University of Denmark (DTU).
 
 The project is written using the Chisel3 library for Scala, to implement the Advanced Encryption Standard (AES) as defined in the specification published by the National Institute of Standards and Technology (NIST) [^1].
-To ensure correctness of the implementation, the validation suite published by NIST [2], was used as our 'golden model' to compare against, for the different algorithm operating modes that we implemented.
+To ensure correctness of the implementation, the validation suite published by NIST [^2], was used as our 'golden model' to compare against, for the different algorithm operating modes that we implemented.
 
 ## Dependencies
 TODO
