@@ -31,10 +31,10 @@ The key features are outlined below, in no particular order:
 
 ## Dependencies
 To build the project and run the tests you only need:
-- **Java (JDK) 17 or newer**. GitHub Actions uses Temurin 17, and we also used Temurin 21 locally.
-- **sbt**, the Scala build tool. The project uses sbt 2.0.8, which the sbt launcher downloads by itself.
+- **Java (JDK) 17 or newer**. GitHub Actions uses Temurin 17, and Temurin 21 used locally.
+- **sbt**, the Scala build tool. The project uses sbt 2.0.8.
 
-Everything else is downloaded by sbt the first time the project is built, with the versions set in `build.sbt`:
+
 
 | Library | Version | Used for |
 |---|---|---|
@@ -43,7 +43,7 @@ Everything else is downloaded by sbt the first time the project is built, with t
 | ChiselTest | 6.0.0 | Simulation and testing |
 | ScalaTest + ScalaCheck (`scalacheck-1-18`) | 3.2.19.0 | Unit tests and random tests |
 
-No separate simulator has to be installed: ChiselTest uses Treadle, a simulator that runs inside the JVM.
+No separate simulator is needed: ChiselTest uses Treadle a simulator that runs inside JVM.
 
 ## Running the project
 TODO
@@ -53,15 +53,15 @@ Run all tests from the root of the repository:
 ```
 sbt testFull
 ```
-In sbt 2, `sbt test` only runs the tests that failed last time or whose code has changed since, so on an unchanged project it can say that 0 tests were run. `sbt testFull` always runs everything. On GitHub Actions every run starts from a clean copy, so `sbt test` runs everything there.
+In sbt 2, `sbt test` only runs tests failed on the last run or codes that has changed since, so if the project hasn't changed it will prompt 0 tests were run. `sbt testFull` always runs everything. On GitHub Actions every run starts from a clean copy, so `sbt test` runs everything there.
 
-Run only one test file, or only the tests in it whose name contains some text:
+Run single test file, or the tests in it whose name contains some text:
 ```
 sbt "testOnly AESEncryptSpec"
 sbt "testOnly AESCFBSpec -- -z NIST"
 ```
 
-By default the NIST Monte Carlo tests only run their first records, because they are slow (see [Testing](#testing)). To run all of them, set `AES_FULL_MCT=1` (in PowerShell: `$env:AES_FULL_MCT=1`) before starting sbt:
+By default only first records of the NIST Monte Carlo tests is run because it takes a lot of time. In order to run them all, set `AES_FULL_MCT=1` (in PowerShell: `$env:AES_FULL_MCT=1`) before starting sbt:
 ```
 AES_FULL_MCT=1 sbt testFull
 ```
@@ -82,7 +82,7 @@ The cipher goes into `KeyExpansion` module which turns it into all the round key
 Same core structure is used for encryption (`AESEncrypt`) and, with the inverse steps, for decryption (`AESDecrypt`). Around the core, a mode wrapper adds the logic for different operational modes.
 
 ### AES
-AES is a symmetric block cipher: the same key is used to encrypt and to decrypt. It always works on blocks of 128 bits (16 bytes), and the key can be 128, 192 or 256 bits long. The key length sets the number of rounds `Nr`:
+AES is a symmetric encryption algorithm. It works on blocks of 128 bits, with three key sizes(128, 192, 256). And key length determine the number of rounds `Nr` will be performed.
 
 | Version | Key length | Rounds (`Nr`) | Round keys |
 |---|---|---|---|
@@ -107,9 +107,7 @@ Each AES round is built from four steps. Every step is its own module with a `St
 | `MixColumns` | Multiplies every column with a fixed matrix in GF(2^8), using only shifts and XOR (`xtime`) | `InvMixColumns`, multiplies with the inverse matrix (14, 11, 13, 9) |
 | `AddRoundKey` | XORs the state with the round key | Itself, because XOR undoes itself |
 
-The S-box is not typed in by hand. `SBox` calculates the 256 values when the hardware is generated, from the definition in FIPS-197 (the inverse in GF(2^8) followed by an affine transformation), and a test compares it with the table printed in the standard. `InvSBox` is the same table turned around.
-
-Our first S-box looked bytes up with `VecInit(table)(index)`. The simulator evaluated this as a long chain of multiplexers, which made the AES tests very slow. Now the 256 values are packed into one 2048-bit constant and a byte is looked up by shifting it (`packed >> (index * 8)`). It gives the same 256 values, but it simulates much faster.
+Our inital S-box looked bytes up with `VecInit(table)(index)`. The simulator evaluated this as a long chain of multiplexers, which slowed down the test. Now the 256 values are packed into one 2048-bit constant and a byte is looked up by shifting it (`packed >> (index * 8)`). It gives the same 256 values, but in simulation it's much faster.
 #### Key expansion
 The `KeyExpansion` module turns the cypher key into `Nr + 1` round keys (11 for 128-AES), following FIPS-197 [^1]. 
 
@@ -126,11 +124,11 @@ It's tested with the FIPS-197 examples and with random keys against software mod
 
 The key size only changes the number of rounds (10, 12 or 14), so the same core works for all three key sizes. The round keys come from `KeyExpansion` and have to stay the same while a block is being encrypted.
 
-The core does not take a new block while it is busy, and the ciphertext stays on the output until it is taken (`out.ready`). A new block can be taken in the same cycle the result is taken, so blocks can follow each other without empty cycles. One block every `Nr + 1` cycles is about 11.6 bits per cycle for 128-AES. We chose one round per cycle as a trade-off: a fully unrolled design could encrypt one block per cycle, but it would need `Nr` copies of the round logic.
+Core won't take a new block while it is busy. The ciphertext wait on the output until it is taken. Next block can enter the same cycle when the result leaves so there are no empty cycles between blocks. One block every `Nr + 1` cycles, that is around 11.6 bits per cycle for the 128-AES. One round per cycle is a trade off, a fully unrolled design would encrypt one block every cycle but then it would need `Nr` copies of the round logic. It would be faster but also requires more hardware to implement.
 #### Decryption core
-`AESDecrypt` follows the Inverse Cipher in FIPS-197 [^1]. It has the same structure, timing and interface as the encryption core, but every step is replaced by its inverse and the round keys are used in reverse order.
+`AESDecrypt` follows the Inverse Cipher in FIPS-197 [^1]. It has the same structure but every step is inversed and the round keys are used in reverse order.
 
-Round 0 is `AddRoundKey` with the last round key. After that one round per cycle does `InvShiftRows`, `InvSubBytes`, `AddRoundKey` and `InvMixColumns`, and the last round skips `InvMixColumns`. Round `r` uses round key `Nr - r`. Because `KeyExpansion` gives all the round keys at once, using them in reverse needs no extra hardware, the core just picks them from the other end.
+Round 0 is `AddRoundKey` with the last round key. Following that, one cycle each round does `InvShiftRows`, `InvSubBytes`, `AddRoundKey` and `InvMixColumns`, and the last round skips `InvMixColumns`. Round `r` uses round key `Nr - r`. Because `KeyExpansion` gives all the round keys at once, using them in reverse needs no extra hardware, the core just picks them from the other end.
 
 FIPS-197 also describes an Equivalent Inverse Cipher, which keeps the same order of steps as encryption but needs `InvMixColumns` applied to the round keys. We chose the direct version, so both cores can use the round keys from `KeyExpansion` without changes.
 
@@ -191,11 +189,11 @@ TODO
 TODO
 
 ## Testing
-All modules are tested in simulation with ChiselTest and ScalaTest. Most test files use the same kinds of tests:
+All modules tested in simulation with ChiselTest and ScalaTest.
 
 - **Known answers**: the worked examples from FIPS-197 [^1] for the steps, `KeyExpansion` and the cores, and from NIST SP 800-38A [^4] for the modes.
 - **Random tests**: ScalaCheck makes random keys, IVs and data, and the hardware output is compared with a software model or with the AES that is built into Java (`javax.crypto`), which is an independent implementation.
-- **Timing tests**: they check that a block takes `Nr + 1` cycles, that nothing new is taken while the core is busy, and that the output is held until `out.ready`.
+- **Timing tests**: they check that a block takes `Nr + 1` cycles, that no new block is taken while the core is busy, and that the output is held until `out.ready`.
 - **NIST validation files**: the response files (`.rsp`) of the AESAVS [^2], stored in `src/test/resources/nist`. They are read by `NistVectors` in `AESReference.scala`, so testing a new mode is mostly writing a small driver for it. For every mode (ECB, CBC, CFB8, CFB128 and OFB) we run the GFSbox, KeySbox, VarTxt, VarKey and MMT files for all three key sizes, encrypting and decrypting. That is 2,138 test cases per mode.
 
 The NIST Monte Carlo tests chain 1000 encryptions per record, so a single wrong bit anywhere changes the result. They are slow in simulation, so by default only the first records are run (5 for ECB, 1 for the modes). Setting the environment variable `AES_FULL_MCT=1` runs all 100.
