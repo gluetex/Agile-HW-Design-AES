@@ -137,13 +137,38 @@ FIPS-197 also describes an Equivalent Inverse Cipher, which keeps the same order
 Besides the NIST files, one test connects `KeyExpansion`, `AESEncrypt` and `AESDecrypt` in a row and checks that random blocks come out unchanged for all three key sizes.
 
 ### Operating modes
-TODO
+The cores only encrypt or decrypt one 128-bit block at a time. To use AES on longer messages a mode of operation is needed, which says how the blocks are connected to each other. NIST SP 800-38A [^4] describes the modes, and we implemented ECB, CBC, CFB and OFB.
+
+Every mode (except ECB) is its own module built around the cores, and they all have the same kind of interface. `key` and `iv` are inputs that have to stay the same during a message, the data goes in and out with ready/valid, and every block has a `first` flag which starts a new message from the IV. CBC and CFB also have a `decrypt` input. OFB doesn't need one, since encrypting and decrypting is the same operation there.
+
+| Mode | Module | Cores used | Block / segment size |
+|---|---|---|---|
+| ECB | `AES` / `AESDecrypt` | encrypt or decrypt | 128 bits |
+| CBC | `AESCBC` | encrypt and decrypt | 128 bits |
+| CFB | `AESCFB` | only encrypt | 8 or 128 bits |
+| OFB | `AESOFB` | only encrypt | 128 bits |
 #### ECB
 ECB (Electronic Codebook) is AES without a mode around it: every 128-bit block is encrypted on its own with the same key. There is no separate ECB module, the cores are used directly (`AES` is `KeyExpansion` and `AESEncrypt` together).
 
 ECB is simple, but the same plaintext block always gives the same ciphertext block, so patterns in the data stay visible. This is why the other modes chain the blocks together with an IV. In our project ECB is mostly used to test the cores against the NIST ECB files.
 #### CBC
-TODO
+CBC (Cipher Block Chaining) [^4] fixes the main problem with ECB by chaining the blocks together. Before a plaintext block is encrypted it is XORed with the ciphertext of the block before it. The first block has nothing before it, so it is XORed with the IV instead:
+- Encrypt: `C_j = AES(P_j XOR C_j-1)`
+- Decrypt: `P_j = AES^-1(C_j) XOR C_j-1`
+
+where `C_-1 = IV`. This way the same plaintext block gives a different ciphertext depending on what came before it, so patterns are not visible anymore.
+
+Unlike CFB and OFB, decryption in CBC needs the real inverse cipher. That's why `AESCBC` has both an `AESEncrypt` and an `AESDecrypt` core, and they share the same `KeyExpansion`, so the round keys are only made once. The `decrypt` input selects which core gets the block and which output is used. It uses more hardware than the other modes, but there's no way around it for CBC.
+
+The module has two registers for the chaining:
+- `lastCipher` holds the newest ciphertext block. When encrypting it is written when the output is taken. When decrypting the ciphertext is the input, so it is written as soon as a block is accepted.
+- `chain` holds `C_j-1` for the block that is being decrypted, so it can be XORed onto the output of `AESDecrypt` at the end.
+
+When encrypting, the next block can be accepted in the same cycle as the output is taken. In that cycle `lastCipher` is not updated yet, so the output of `AESEncrypt` is used directly as `C_j-1` instead. Without this the second block would be chained with the old value.
+
+Every block takes `Nr + 1` cycles, like in the cores. When encrypting a block needs the ciphertext of the one before it, so only one block can be worked on at a time. Decryption could in theory be done in parallel, because all ciphertext blocks are already known, but we kept it one block at a time so both directions work the same and the module stays simple.
+
+For testing we used the example from NIST SP 800-38A (F.2.1 and F.2.2), random messages of 1 to 8 blocks compared with `AES/CBC/NoPadding` from `javax.crypto` for all three key sizes, and the NIST AESAVS files. Every random message starts with a new IV, so this also tests that the `first` flag works. There are also timing tests that check the `Nr + 1` cycles and that the chaining is still correct when the output is held for a while before it's taken.
 #### CFB
 CFB (Cipher Feedback) [^4] turns AES into a stream cipher. `AESCFB` keeps a 128-bit input block `I`, which starts as the IV. For every segment of `s` bits:
 1. `O = AES(I)`
