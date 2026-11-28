@@ -196,6 +196,18 @@ Every block takes `Nr + 1` cycles. The keystream doesn't need the data, so it co
 
 For testing we used the example from NIST SP 800-38A (F.4.1), random messages of 1 to 8 blocks compared with `AES/OFB/NoPadding` from `javax.crypto` for all three key sizes, and the NIST AESAVS files. Timing tests check the `Nr + 1` cycles and that the output waits until `out.ready`. The Monte Carlo test is only run for 128-bit keys.
 ### Interface (ready/valid)
+The cores (`AES`, `AESEncrypt`, `AESDecrypt`) and the mode modules all take data in and give data out with a ready/valid handshake. In Chisel this is `Decoupled`. `in` and `out` each have three signals:
+- `valid`: the sender has data on `bits`.
+- `ready`: the receiver can take it.
+- `bits`: the data itself.
+
+A block only moves when `valid` and `ready` are both high in the same cycle. In Chisel this is called `fire`.
+
+The core says `in.ready` when it is not busy and the last result has been taken. It is also ready in the cycle the last result is being taken, so the next block can go in right away. When a block is done, `out.valid` goes high and the result stays on `out.bits` until `out.ready` is high. If nobody takes the result, the core does not take a new block, so no data is lost.
+
+The other inputs, like `key`, `iv` and `decrypt`, are normal inputs and are not part of the handshake. They have to stay the same while a block or a message is being worked on.
+
+The mode modules use the same handshake. Their `in.bits` has the data block and the `first` flag, and `out.bits` is the result. Inside, they mostly pass the handshake on to the core. `AESCBC` sends it to the encryption or the decryption core, depending on `decrypt`.
 
 ### UART
 TODO
