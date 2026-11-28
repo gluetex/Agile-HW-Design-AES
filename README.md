@@ -179,7 +179,22 @@ Encryption and decryption only differ in which side is the ciphertext, so both d
 
 Every segment needs the ciphertext of the one before, so only one segment is worked on at a time. A segment takes `Nr + 1` cycles, and the next one can be taken in the same cycle the output is taken. For CFB8 this means one full AES encryption per byte, so it is 16 times slower than CFB128. Like in CBC and OFB, `key`, `iv` and `decrypt` are inputs, and a `first` flag on a segment starts a new message from the IV.
 #### OFB
-TODO
+OFB (Output Feedback) [^4] also makes AES work like a stream cipher. We encrypt the IV, then encrypt the result again, and keep doing that for every block. This gives us the keystream. Each data block is XORed with one keystream block:
+- `O_j = AES(O_j-1)`, where `O_-1 = IV`
+- Encrypt: `C_j = P_j XOR O_j`
+- Decrypt: `P_j = C_j XOR O_j`
+
+The keystream only comes from the key and the IV, not from the data. So encrypting and decrypting are the same thing. That's why `AESOFB` has no `decrypt` input and only uses the encryption core.
+
+The module has two registers:
+- `keystream` holds the block that goes into AES next. At the start of a message it is the IV, after that it is the last AES output.
+- `data` holds the input block, so it can be XORed with the AES output at the end.
+
+The next block can go in the same cycle the output is taken. In that cycle `keystream` is not updated yet, so the AES output is used directly.
+
+Every block takes `Nr + 1` cycles. The keystream doesn't need the data, so it could be made before the data arrives. We didn't do this, to keep the module simple and the same as the other modes.
+
+For testing we used the example from NIST SP 800-38A (F.4.1), random messages of 1 to 8 blocks compared with `AES/OFB/NoPadding` from `javax.crypto` for all three key sizes, and the NIST AESAVS files. Timing tests check the `Nr + 1` cycles and that the output waits until `out.ready`. The Monte Carlo test is only run for 128-bit keys.
 ### Interface (ready/valid)
 
 ### UART
